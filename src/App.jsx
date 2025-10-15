@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 const DEFAULT_WEIGHTS = { liquidity: 0.5, fundamentals: 0.3, bitcoin: 0.2 };
-const DEFAULT_FRED_KEY = "4d7f73d268ae4c1f10e48a4a17203b0f";
+const DEFAULT_FRED_KEY = import.meta.env.VITE_FRED_API_KEY || "4d7f73d268ae4c1f10e48a4a17203b0f";
 
 const FRED_SERIES = {
   M2SL: "M2SL",
