@@ -67,9 +67,7 @@ async function fredObservations(seriesId, apiKey, params = {}) {
 
 // CoinGecko Bitcoin data fetch
 async function coingeckoBTC() {
-  const url =
-    "https://api.coingecko.com/api/v3/coins/bitcoin?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false";
-  const res = await fetch(url);
+  const res = await fetch("/api/coingecko");
   if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
   return res.json();
 }
