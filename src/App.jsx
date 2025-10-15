@@ -13,12 +13,10 @@ const FRED_SERIES = {
   FEDFUNDS: "FEDFUNDS",
 };
 
-// retry + cache
 const RETRY_INTERVAL_MS = 15000;
-const MAX_RETRIES_PER_SERIES = 6;
-const CACHE_PREFIX = "LD_CACHE_"; // Liquidity Dashboard cache
+const MAX_RETRIES = 6;
+const CACHE_PREFIX = "LD_CACHE_";
 
-// formatters
 const fmt2 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const fmt0 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const pct = (v) => (v == null ? "—" : `${fmt2.format(v)}%`);
@@ -51,62 +49,44 @@ function lastN(obs, n = 12) {
     .map((o) => parseFloat(o.value))
     .filter((v) => isFinite(v));
 }
-function cacheKey(seriesId) {
-  return `${CACHE_PREFIX}${seriesId}`;
+function cKey(id) {
+  return `${CACHE_PREFIX}${id}`;
 }
-function saveCache(seriesId, observations) {
+function saveCache(id, data) {
   try {
-    localStorage.setItem(cacheKey(seriesId), JSON.stringify(observations || []));
+    localStorage.setItem(cKey(id), JSON.stringify(data || []));
   } catch {}
 }
-function loadCache(seriesId) {
+function loadCache(id) {
   try {
-    const s = localStorage.getItem(cacheKey(seriesId));
+    const s = localStorage.getItem(cKey(id));
     return s ? JSON.parse(s) : [];
   } catch {
     return [];
   }
 }
-function saveBtcCache(price) {
-  try {
-    localStorage.setItem(`${CACHE_PREFIX}BTC`, JSON.stringify({ price, t: Date.now() }));
-  } catch {}
-}
-function loadBtcCache() {
-  try {
-    const s = localStorage.getItem(`${CACHE_PREFIX}BTC`);
-    return s ? JSON.parse(s).price : null;
-  } catch {
-    return null;
-  }
-}
 
-/* ==================== HARDENED FETCH ==================== */
-async function safeJsonFetch(url, label) {
+/* ==================== FETCH HELPERS ==================== */
+async function safeJson(url, label) {
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
-    const text = await res.text();
-    if (text.trim().startsWith("<")) {
-      throw new Error(`${label} returned HTML`);
-    }
-    const json = JSON.parse(text);
-    return json;
-  } catch (err) {
-    console.error(`${label} fetch error:`, err.message);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`${label} HTTP ${r.status}`);
+    const t = await r.text();
+    if (t.trim().startsWith("<")) throw new Error(`${label} returned HTML`);
+    return JSON.parse(t);
+  } catch (e) {
+    console.error(label, e.message);
     return null;
   }
 }
-async function fred(seriesId, key, params = {}) {
+async function fred(id, key) {
   const q = new URLSearchParams({
-    series_id: seriesId,
+    series_id: id,
     api_key: key,
     file_type: "json",
-    ...params,
   });
-  const url = `/api/fred?${q}`;
-  const j = await safeJsonFetch(url, `FRED ${seriesId}`);
-  return j?.observations || null; // null==network fail; []==valid empty
+  const j = await safeJson(`/api/fred?${q}`, `FRED ${id}`);
+  return j?.observations || null;
 }
 async function coingeckoBTC() {
   try {
@@ -115,13 +95,13 @@ async function coingeckoBTC() {
     if (t.trim().startsWith("<")) throw new Error("HTML from CoinGecko");
     const j = JSON.parse(t);
     return j.bitcoin?.usd ?? j.market_data?.current_price?.usd ?? null;
-  } catch (err) {
-    console.error("BTC fetch error:", err.message);
+  } catch (e) {
+    console.error("BTC", e.message);
     return null;
   }
 }
 
-/* ==================== UI COMPONENTS ==================== */
+/* ==================== UI PIECES ==================== */
 function Card({ children, style }) {
   return (
     <div
@@ -156,7 +136,7 @@ function Bar({ label, value, tooltip }) {
             width: `${(value || 0) * 100}%`,
             height: "100%",
             background: color,
-            transition: "width 0.6s ease",
+            transition: "width .6s ease",
           }}
         />
       </div>
@@ -173,7 +153,7 @@ function Sparkline({ data, color = "#16a34a", width = 100, height = 28 }) {
     height - ((v - min) / (max - min || 1)) * (height - 2) - 1;
   const pts = data.map((v, i) => `${i * dx},${scaleY(v)}`).join(" ");
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+    <svg width={width} height={height}>
       <polyline
         fill="none"
         stroke={color}
@@ -186,7 +166,12 @@ function Sparkline({ data, color = "#16a34a", width = 100, height = 28 }) {
   );
 }
 function StatusDot({ status }) {
-  const color = status === "ok" ? "#16a34a" : status === "cache" ? "#facc15" : "#dc2626";
+  const color =
+    status === "ok"
+      ? "#16a34a"
+      : status === "cache"
+      ? "#facc15"
+      : "#dc2626";
   return (
     <span
       style={{
@@ -206,7 +191,7 @@ function Metric({ label, value, isPrice = false, trend, status = "ok" }) {
     value == null ? "#666" : isPrice ? "#111" : value > 0 ? "#16a34a" : "#dc2626";
   return (
     <Card>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
         <div>
           <div style={{ fontSize: 13, color: "#555", marginBottom: 2 }}>
             <StatusDot status={status} />
@@ -222,78 +207,61 @@ function Metric({ label, value, isPrice = false, trend, status = "ok" }) {
   );
 }
 
-/* ==================== MAIN ==================== */
+/* ==================== MAIN APP ==================== */
 export default function App() {
   const [apiKey] = useState(localStorage.getItem("FRED_API_KEY") || DEFAULT_FRED_KEY);
   const [series, setSeries] = useState({});
   const [btc, setBtc] = useState(null);
-  const [statusMap, setStatusMap] = useState({}); // {seriesId: "ok"|"cache"|"fail", BTC: ...}
+  const [statusMap, setStatusMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
-
-  // retry queue
-  const retryCounts = useRef({});   // seriesId -> count
+  const retryCounts = useRef({});
   const retryTimer = useRef(null);
 
-  function markStatus(seriesId, state) {
-    setStatusMap((prev) => ({ ...prev, [seriesId]: state }));
-  }
-  function scheduleRetryFailed() {
+  function scheduleRetry() {
     if (retryTimer.current) return;
-    retryTimer.current = setTimeout(async () => {
-      retryTimer.current = null;
-      await retryFailedOnce();
-    }, RETRY_INTERVAL_MS);
+    retryTimer.current = setTimeout(retryFailed, RETRY_INTERVAL_MS);
   }
-  async function retryFailedOnce() {
-    const fails = Object.entries(statusMap)
-      .filter(([k, v]) => v === "fail")
-      .map(([k]) => k);
-    if (fails.length === 0) return;
 
-    const nextStatus = { ...statusMap };
+  async function retryFailed() {
+    retryTimer.current = null;
+    const fails = Object.entries(statusMap)
+      .filter(([_, s]) => s === "fail")
+      .map(([id]) => id);
+    if (!fails.length) return;
+    const next = { ...statusMap };
     for (const id of fails) {
       const count = (retryCounts.current[id] || 0) + 1;
       retryCounts.current[id] = count;
-      if (count > MAX_RETRIES_PER_SERIES) continue;
-
+      if (count > MAX_RETRIES) continue;
       if (id === "BTC") {
         const p = await coingeckoBTC();
-        if (p != null) {
+        if (p) {
           setBtc(p);
-          saveBtcCache(p);
-          nextStatus.BTC = "ok";
-        } else {
-          nextStatus.BTC = loadBtcCache() != null ? "cache" : "fail";
-        }
+          next.BTC = "ok";
+        } else next.BTC = "fail";
       } else {
         const obs = await fred(id, apiKey);
         if (obs) {
           setSeries((prev) => ({ ...prev, [id]: obs }));
           saveCache(id, obs);
-          nextStatus[id] = "ok";
+          next[id] = "ok";
         } else {
-          nextStatus[id] = loadCache(id).length ? "cache" : "fail";
+          const c = loadCache(id);
+          next[id] = c.length ? "cache" : "fail";
         }
       }
     }
-    setStatusMap(nextStatus);
-
-    // schedule again if still failures
-    if (Object.values(nextStatus).includes("fail")) scheduleRetryFailed();
+    setStatusMap(next);
+    if (Object.values(next).includes("fail")) scheduleRetry();
   }
 
   async function loadAll() {
     setError(null);
     setLoading(true);
     retryCounts.current = {};
-    if (retryTimer.current) {
-      clearTimeout(retryTimer.current);
-      retryTimer.current = null;
-    }
     try {
-      // kick off requests
       const [m2, prod, gdp, cpi, dgs10, fed, btcP] = await Promise.all([
         fred(FRED_SERIES.M2SL, apiKey),
         fred(FRED_SERIES.PROD, apiKey),
@@ -303,11 +271,8 @@ export default function App() {
         fred(FRED_SERIES.FEDFUNDS, apiKey),
         coingeckoBTC(),
       ]);
-
-      // status + caching
-      const nextSeries = { ...series };
-      const nextStatus = { ...statusMap };
-
+      const next = { ...statusMap };
+      const s = {};
       for (const [id, data] of [
         [FRED_SERIES.M2SL, m2],
         [FRED_SERIES.PROD, prod],
@@ -317,37 +282,23 @@ export default function App() {
         [FRED_SERIES.FEDFUNDS, fed],
       ]) {
         if (data) {
-          nextSeries[id] = data;
+          s[id] = data;
           saveCache(id, data);
-          nextStatus[id] = "ok";
+          next[id] = "ok";
         } else {
-          const cached = loadCache(id);
-          if (cached.length) {
-            nextSeries[id] = cached;
-            nextStatus[id] = "cache";
-          } else {
-            nextSeries[id] = [];
-            nextStatus[id] = "fail";
-          }
+          const c = loadCache(id);
+          s[id] = c;
+          next[id] = c.length ? "cache" : "fail";
         }
       }
-
-      if (btcP != null) {
+      if (btcP) {
         setBtc(btcP);
-        saveBtcCache(btcP);
-        nextStatus.BTC = "ok";
-      } else {
-        const cachedBtc = loadBtcCache();
-        setBtc(cachedBtc);
-        nextStatus.BTC = cachedBtc != null ? "cache" : "fail";
-      }
-
-      setSeries(nextSeries);
-      setStatusMap(nextStatus);
+        next.BTC = "ok";
+      } else next.BTC = "fail";
+      setSeries(s);
+      setStatusMap(next);
       setLastUpdated(new Date().toLocaleString());
-
-      // schedule retry if any failures
-      if (Object.values(nextStatus).includes("fail")) scheduleRetryFailed();
+      if (Object.values(next).includes("fail")) scheduleRetry();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -357,20 +308,15 @@ export default function App() {
 
   useEffect(() => {
     loadAll();
-    // auto-refresh hourly
     const id = setInterval(loadAll, 3600_000);
     return () => clearInterval(id);
   }, []);
 
-  /* ---------- Compute metrics (with guards) ---------- */
   const metrics = useMemo(() => {
     const hasAll =
       series.M2SL && series.GDP_REAL && series.CPI && series.PROD &&
       series.M2SL.length && series.GDP_REAL.length && series.CPI.length && series.PROD.length;
-
-    if (!hasAll)
-      return null;
-
+    if (!hasAll) return null;
     const M2_yoy = yoy(series.M2SL);
     const GDP_yoy = yoy(series.GDP_REAL);
     const CPI_yoy = yoy(series.CPI);
@@ -383,11 +329,9 @@ export default function App() {
     const policyGap = fed && CPI_yoy ? fed - CPI_yoy : 0;
     const realGrowth = GDP_yoy && CPI_yoy ? GDP_yoy - CPI_yoy : 0;
 
-    const tides =
-      0.6 * normalize(M2_yoy, { low: -5, high: 10 }) +
+    const tides = 0.6 * normalize(M2_yoy, { low: -5, high: 10 }) +
       0.4 * normalize(-realRate, { low: -3, high: 3 });
-    const waves =
-      0.5 * normalize(realGrowth, { low: -5, high: 5 }) +
+    const waves = 0.5 * normalize(realGrowth, { low: -5, high: 5 }) +
       0.5 * normalize(-policyGap, { low: -5, high: 5 });
     const seafloor = normalize(PROD_yoy, { low: -2, high: 4 });
     const composite = 0.5 * tides + 0.35 * waves + 0.15 * seafloor;
@@ -403,11 +347,15 @@ export default function App() {
         ? "Short-Term Rebound"
         : "Ebb Tide";
 
+    // Bubble Stress Index
+    const bubbleStress = normalize(M2_yoy - GDP_yoy, { low: -5, high: 15 });
+
     return {
       M2_yoy, GDP_yoy, CPI_yoy, PROD_yoy,
       dgs10, fed, btc_price,
       realRate, policyGap, realGrowth,
       tides, waves, seafloor, composite, regime, current,
+      bubbleStress,
       M2_trend: lastN(series.M2SL),
       GDP_trend: lastN(series.GDP_REAL),
       CPI_trend: lastN(series.CPI),
@@ -415,53 +363,42 @@ export default function App() {
     };
   }, [series, btc]);
 
-  /* ---------- Feed health strip ---------- */
   const feedHealth = useMemo(() => {
     const vals = Object.values(statusMap);
-    const total = vals.length;
-    if (!total) return { label: "Unknown", color: "#9ca3af" };
-    const fails = vals.filter((v) => v === "fail").length;
+    const t = vals.length;
+    if (!t) return { label: "Unknown", color: "#9ca3af" };
+    const fail = vals.filter((v) => v === "fail").length;
     const cache = vals.filter((v) => v === "cache").length;
-    if (fails === 0 && cache === 0) return { label: "Stable", color: "#16a34a" };
-    if (fails < total) return { label: "Degraded", color: "#facc15" };
+    if (fail === 0 && cache === 0) return { label: "Stable", color: "#16a34a" };
+    if (fail < t) return { label: "Degraded", color: "#facc15" };
     return { label: "Outage", color: "#dc2626" };
   }, [statusMap]);
 
-  /* ---------- Render ---------- */
   const prefersDark =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-color-scheme: dark)").matches;
   const bg = prefersDark ? "#1f1f1f" : "#fff";
   const text = prefersDark ? "#f3f4f6" : "#111";
 
-  if (loading) return <div style={{ padding: 50, fontFamily: "system-ui" }}>Loading data…</div>;
-  if (error) return <div style={{ padding: 50, color: "red", fontFamily: "system-ui" }}>{error}</div>;
-  if (!metrics) return <div style={{ padding: 50, fontFamily: "system-ui" }}>Waiting for data…</div>;
+  if (loading)
+    return <div style={{ padding: 50, fontFamily: "system-ui" }}>Loading data…</div>;
+  if (error)
+    return <div style={{ padding: 50, color: "red", fontFamily: "system-ui" }}>{error}</div>;
+  if (!metrics)
+    return <div style={{ padding: 50, fontFamily: "system-ui" }}>Waiting for data…</div>;
 
   return (
-    <div
-      style={{
-        fontFamily: "system-ui",
-        padding: 24,
-        maxWidth: 940,
-        margin: "0 auto",
-        color: text,
-        background: bg,
-      }}
-    >
+    <div style={{ fontFamily: "system-ui", padding: 24, maxWidth: 940, margin: "0 auto", color: text, background: bg }}>
       <h1 style={{ fontSize: "1.4rem", marginBottom: 8 }}>Liquidity–Fundamentals Dashboard</h1>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <div
-          style={{
-            background: feedHealth.color,
-            color: "#0b0b0b",
-            borderRadius: 999,
-            padding: "4px 10px",
-            fontSize: 12,
-            fontWeight: 700,
-          }}
-          title="Overall data feed health (live/cache/fail)"
-        >
+        <div style={{
+          background: feedHealth.color,
+          borderRadius: 999,
+          padding: "4px 10px",
+          fontSize: 12,
+          fontWeight: 700,
+          color: "#0b0b0b",
+        }}>
           Feed: {feedHealth.label}
         </div>
         <div style={{ fontSize: 12, color: "#777" }}>Last updated: {lastUpdated}</div>
@@ -481,13 +418,35 @@ export default function App() {
         </button>
       </div>
 
-      {/* Ocean bars */}
+      {/* Ocean Bars */}
       <Card>
         <div style={{ fontSize: 13, color: "#555", marginBottom: 4 }}>Ocean Depth Forces</div>
         <div style={{ display: "flex", gap: 6 }}>
           <Bar label="🌊 Tides" value={metrics.tides} tooltip="Liquidity & real-rate trend" />
           <Bar label="🌬 Waves" value={metrics.waves} tooltip="Cyclical policy & growth impulse" />
           <Bar label="🪨 Seafloor" value={metrics.seafloor} tooltip="Structural productivity foundation" />
+        </div>
+      </Card>
+
+      {/* Bubble Stress Index */}
+      <Card>
+        <div style={{ fontSize: 13, color: "#555", marginBottom: 4 }}>Bubble Stress Index</div>
+        <div style={{
+          fontSize: 16,
+          fontWeight: 700,
+          color:
+            metrics.bubbleStress > 0.7
+              ? "#dc2626"
+              : metrics.bubbleStress > 0.4
+              ? "#facc15"
+              : "#16a34a",
+        }}>
+          {fmt2.format(metrics.bubbleStress * 100)}%
+          {metrics.bubbleStress > 0.7
+            ? " – Liquidity bubble forming"
+            : metrics.bubbleStress > 0.4
+            ? " – Elevated monetary distortion"
+            : " – Balanced"}
         </div>
       </Card>
 
@@ -499,28 +458,26 @@ export default function App() {
         </div>
       </Card>
 
-      {/* Core indicators with status dots + sparklines */}
-      <div
-        style={{
-          display: "grid",
-          gap: 10,
-          background: prefersDark ? "#111" : "#f8f9fa",
-          padding: 12,
-          borderRadius: 10,
-          border: "1px solid #e5e7eb",
-        }}
-      >
-        <Metric label="M2 YoY" value={metrics.M2_yoy} trend={metrics.M2_trend} status={statusMap.M2SL ? (statusMap.M2SL) : "fail"} />
-        <Metric label="GDP YoY" value={metrics.GDP_yoy} trend={metrics.GDP_trend} status={statusMap.GDP_REAL ? (statusMap.GDP_REAL) : "fail"} />
-        <Metric label="CPI YoY" value={metrics.CPI_yoy} trend={metrics.CPI_trend} status={statusMap.CPI ? statusMap.CPI : "fail"} />
-        <Metric label="Productivity YoY" value={metrics.PROD_yoy} trend={metrics.PROD_trend} status={statusMap.PROD ? statusMap.PROD : "fail"} />
+      {/* Metrics Grid */}
+      <div style={{
+        display: "grid",
+        gap: 10,
+        background: prefersDark ? "#111" : "#f8f9fa",
+        padding: 12,
+        borderRadius: 10,
+        border: "1px solid #e5e7eb",
+      }}>
+        <Metric label="M2 YoY" value={metrics.M2_yoy} trend={metrics.M2_trend} status={statusMap.M2SL} />
+        <Metric label="GDP YoY" value={metrics.GDP_yoy} trend={metrics.GDP_trend} status={statusMap.GDP_REAL} />
+        <Metric label="CPI YoY" value={metrics.CPI_yoy} trend={metrics.CPI_trend} status={statusMap.CPI} />
+        <Metric label="Productivity YoY" value={metrics.PROD_yoy} trend={metrics.PROD_trend} status={statusMap.PROD} />
         <Card>
           <div style={{ fontSize: 13, color: "#555", marginBottom: 2 }}>10Y / Fed Funds / Real Rate</div>
           <div style={{ fontSize: 14 }}>
             {fmt2.format(metrics.dgs10 ?? 0)}% / {fmt2.format(metrics.fed ?? 0)}% / {fmt2.format(metrics.realRate ?? 0)}%
           </div>
         </Card>
-        <Metric label="Bitcoin Price (USD)" value={metrics.btc_price} isPrice status={statusMap.BTC ? statusMap.BTC : "fail"} />
+        <Metric label="Bitcoin Price (USD)" value={metrics.btc_price} isPrice status={statusMap.BTC} />
       </div>
 
       {/* Narrative */}
@@ -532,27 +489,31 @@ export default function App() {
           Real rate {fmt2.format(metrics.realRate)}%, policy gap {fmt2.format(metrics.policyGap)}%.
           <br />
           Tides {metrics.tides > 0.5 ? "rising" : "falling"}, waves {metrics.waves > 0.5 ? "supportive" : "muted"}, seafloor {metrics.seafloor > 0.5 ? "stable" : "soft"}.
+          <br />
+          {metrics.bubbleStress > 0.7
+            ? "Excess liquidity relative to output is inflating financial assets — consistent with a 'bubble in money' regime."
+            : metrics.bubbleStress > 0.4
+            ? "Monetary expansion is outpacing real growth, suggesting moderate distortion."
+            : "Monetary growth and output remain aligned — limited bubble risk so far."}
         </div>
       </Card>
 
       {/* Export */}
-      <button
-        onClick={() => window.print()}
-        style={{
-          marginTop: 12,
-          padding: "6px 12px",
-          borderRadius: 6,
-          border: "1px solid #ccc",
-          cursor: "pointer",
-          background: prefersDark ? "#2a2a2a" : "#fafafa",
-          color: text,
-        }}
-      >
+      <button onClick={() => window.print()} style={{
+        marginTop: 12,
+        padding: "6px 12px",
+        borderRadius: 6,
+        border: "1px solid #ccc",
+        cursor: "pointer",
+        background: prefersDark ? "#2a2a2a" : "#fafafa",
+        color: text,
+      }}>
         Export / Print PDF
       </button>
     </div>
   );
 }
+
 
      
 
