@@ -70,6 +70,36 @@ async function fredObservations(seriesId, apiKey, params = {}) {
   return json?.observations || [];
 }
 
+async function fredObservations(seriesId, apiKey, params = {}) {
+  const search = new URLSearchParams({
+    series_id: seriesId,
+    api_key: apiKey,
+    file_type: "json",
+    ...params,
+  });
+
+  const fredUrl = `https://api.stlouisfed.org/fred/series/observations?${search.toString()}`;
+  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(fredUrl)}`;
+
+  console.log("▶️ fetching:", proxyUrl, "with key", apiKey.slice(0,6) + "...");
+
+  try {
+    const res = await fetch(proxyUrl, { mode: "cors" });
+    if (!res.ok) {
+      console.error("❌ fetch failed:", res.status, res.statusText);
+      throw new Error(`FRED ${seriesId} HTTP ${res.status}`);
+    }
+    const text = await res.text();
+    console.log("✅ raw FRED response (first 200 chars):", text.slice(0,200));
+    const json = JSON.parse(text);
+    return json?.observations || [];
+  } catch (err) {
+    console.error("⚠️ FRED error", err);
+    throw err;
+  }
+}
+
+
 async function coingeckoBTC() {
   const url = `https://api.coingecko.com/api/v3/coins/bitcoin?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
   const res = await fetch(url);
