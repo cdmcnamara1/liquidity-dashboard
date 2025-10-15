@@ -52,9 +52,19 @@ function normalize(metric, { goodHigh = true, low = -5, high = 5 } = {}) {
 }
 
 async function fredObservations(seriesId, apiKey, params = {}) {
-  const search = new URLSearchParams({ series_id: seriesId, api_key: apiKey, file_type: "json", ...params });
-  const url = `https://api.stlouisfed.org/fred/series/observations?${search.toString()}`;
-  const res = await fetch(url);
+  const search = new URLSearchParams({
+    series_id: seriesId,
+    api_key: apiKey,
+    file_type: "json",
+    ...params,
+  });
+
+  // Force browser-side fetch through a public CORS proxy
+  const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(
+    "https://api.stlouisfed.org/fred/series/observations?" + search.toString()
+  )}`;
+
+  const res = await fetch(url, { mode: "cors" });
   if (!res.ok) throw new Error(`FRED ${seriesId} HTTP ${res.status}`);
   const json = await res.json();
   return json?.observations || [];
