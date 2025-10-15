@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-/* ---------------- Config ---------------- */
+/* ==================== CONFIG ==================== */
 const DEFAULT_FRED_KEY =
   import.meta.env.VITE_FRED_API_KEY || "4d7f73d268ae4c1f10e48a4a17203b0f";
 
@@ -14,13 +14,15 @@ const FRED_SERIES = {
 };
 
 const fmt2 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+const fmt0 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const pct = (v) => (v == null ? "—" : `${fmt2.format(v)}%`);
+const money0 = (v) => (v == null ? "—" : `$${fmt0.format(v)}`);
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
 const normalize = (v, { low, high }) =>
   v == null ? 0.5 : clamp01((v - low) / (high - low));
 const arrow = (v) => (v == null ? "" : v > 0 ? "↑" : v < 0 ? "↓" : "→");
 
-/* ---------------- Helpers ---------------- */
+/* ==================== HELPERS ==================== */
 function yoy(obs) {
   if (!obs || obs.length < 13) return null;
   const last = parseFloat(obs.at(-1)?.value);
@@ -36,8 +38,15 @@ function latestNum(obs) {
   }
   return null;
 }
+function lastN(obs, n = 12) {
+  if (!obs) return null;
+  return obs
+    .slice(-n)
+    .map((o) => parseFloat(o.value))
+    .filter((v) => isFinite(v));
+}
 
-/* ---------------- Data Fetch ---------------- */
+/* ==================== DATA FETCH ==================== */
 async function fred(id, key, params = {}) {
   const q = new URLSearchParams({
     series_id: id,
@@ -57,8 +66,8 @@ async function coingeckoBTC() {
   return j.bitcoin?.usd ?? j.market_data?.current_price?.usd ?? null;
 }
 
-/* ---------------- Small Components ---------------- */
-function Card({ children }) {
+/* ==================== UI BITS ==================== */
+function Card({ children, style }) {
   return (
     <div
       style={{
@@ -67,6 +76,7 @@ function Card({ children }) {
         borderRadius: 10,
         padding: 10,
         marginBottom: 8,
+        ...style,
       }}
     >
       {children}
@@ -91,7 +101,7 @@ function Bar({ label, value, tooltip }) {
             width: `${(value || 0) * 100}%`,
             height: "100%",
             background: color,
-            transition: "width 0.5s ease",
+            transition: "width 0.6s ease",
           }}
         />
       </div>
@@ -99,8 +109,60 @@ function Bar({ label, value, tooltip }) {
     </div>
   );
 }
+function Sparkline({ data, color = "#16a34a", width = 100, height = 28 }) {
+  if (!data || data.length < 2) return null;
+  const min = Math.min(...data),
+    max = Math.max(...data);
+  const dx = width / (data.length - 1 || 1);
+  const scaleY = (v) =>
+    height - ((v - min) / (max - min || 1)) * (height - 2) - 1;
+  const pts = data.map((v, i) => `${i * dx},${scaleY(v)}`).join(" ");
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <polyline
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+        points={pts}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+function Metric({ label, value, isPrice = false, trend }) {
+  const dir = isPrice ? "" : arrow(value);
+  const color =
+    value == null ? "#666" : isPrice ? "#111" : value > 0 ? "#16a34a" : "#dc2626";
+  return (
+    <Card>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 13, color: "#555", marginBottom: 2 }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color }}>
+            {value == null
+              ? "—"
+              : isPrice
+              ? money0(value)
+              : pct(value)}{" "}
+            {dir}
+          </div>
+        </div>
+        {trend && <Sparkline data={trend} color={color} />}
+      </div>
+    </Card>
+  );
+}
 
-/* ---------------- Main App ---------------- */
+/* ==================== MAIN APP ==================== */
 export default function App() {
   const [apiKey] = useState(
     localStorage.getItem("FRED_API_KEY") || DEFAULT_FRED_KEY
@@ -111,11 +173,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  async function load() {
+  async function loadAll() {
     setError(null);
     setLoading(true);
     try {
-      const [m2, prod, gdp, cpi, dgs10, fed, btcPrice] = await Promise.all([
+      const [m2, prod, gdp, cpi, dgs10, fed, btcP] = await Promise.all([
         fred(FRED_SERIES.M2SL, apiKey, { observation_start: "2010-01-01" }),
         fred(FRED_SERIES.PROD, apiKey, { observation_start: "2010-01-01" }),
         fred(FRED_SERIES.GDP_REAL, apiKey, { observation_start: "2010-01-01" }),
@@ -124,8 +186,15 @@ export default function App() {
         fred(FRED_SERIES.FEDFUNDS, apiKey, { observation_start: "2010-01-01" }),
         coingeckoBTC(),
       ]);
-      setSeries({ M2SL: m2, PROD: prod, GDP_REAL: gdp, CPI: cpi, DGS10: dgs10, FEDFUNDS: fed });
-      setBtc(btcPrice);
+      setSeries({
+        M2SL: m2,
+        PROD: prod,
+        GDP_REAL: gdp,
+        CPI: cpi,
+        DGS10: dgs10,
+        FEDFUNDS: fed,
+      });
+      setBtc(btcP);
       setLastUpdated(new Date().toLocaleString());
     } catch (e) {
       setError(e.message);
@@ -135,7 +204,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    load();
+    loadAll();
   }, []);
 
   const metrics = useMemo(() => {
@@ -153,20 +222,23 @@ export default function App() {
     const PROD_yoy = yoy(series.PROD);
     const dgs10 = latestNum(series.DGS10);
     const fed = latestNum(series.FEDFUNDS);
-    const btc_price = btc;
+    const btc_price = btc ?? null;
 
     const realRate = dgs10 && CPI_yoy ? dgs10 - CPI_yoy : 0;
     const policyGap = fed && CPI_yoy ? fed - CPI_yoy : 0;
     const realGrowth = GDP_yoy && CPI_yoy ? GDP_yoy - CPI_yoy : 0;
 
-    const tides = 0.6 * normalize(M2_yoy, { low: -5, high: 10 }) +
+    const tides =
+      0.6 * normalize(M2_yoy, { low: -5, high: 10 }) +
       0.4 * normalize(-realRate, { low: -3, high: 3 });
-    const waves = 0.5 * normalize(realGrowth, { low: -5, high: 5 }) +
+    const waves =
+      0.5 * normalize(realGrowth, { low: -5, high: 5 }) +
       0.5 * normalize(-policyGap, { low: -5, high: 5 });
     const seafloor = normalize(PROD_yoy, { low: -2, high: 4 });
     const composite = 0.5 * tides + 0.35 * waves + 0.15 * seafloor;
 
-    const regime = composite >= 0.7 ? "Risk-On" : composite >= 0.4 ? "Neutral" : "Risk-Off";
+    const regime =
+      composite >= 0.7 ? "Risk-On" : composite >= 0.4 ? "Neutral" : "Risk-Off";
     const current =
       tides > 0.5 && waves > 0.5
         ? "Rising Tide"
@@ -177,11 +249,26 @@ export default function App() {
         : "Ebb Tide";
 
     return {
-      M2_yoy, GDP_yoy, CPI_yoy, PROD_yoy,
-      dgs10, fed, btc_price,
-      realRate, policyGap, realGrowth,
-      tides, waves, seafloor, composite,
-      regime, current
+      M2_yoy,
+      GDP_yoy,
+      CPI_yoy,
+      PROD_yoy,
+      dgs10,
+      fed,
+      btc_price,
+      realRate,
+      policyGap,
+      realGrowth,
+      tides,
+      waves,
+      seafloor,
+      composite,
+      regime,
+      current,
+      M2_trend: lastN(series.M2SL),
+      GDP_trend: lastN(series.GDP_REAL),
+      CPI_trend: lastN(series.CPI),
+      PROD_trend: lastN(series.PROD),
     };
   }, [series, btc]);
 
@@ -191,16 +278,19 @@ export default function App() {
   const bg = prefersDark ? "#1f1f1f" : "#fff";
   const text = prefersDark ? "#f3f4f6" : "#111";
 
-  if (loading) return <div style={{padding:50,fontFamily:"system-ui"}}>Loading data...</div>;
-  if (error) return <div style={{padding:50,color:"red"}}>{error}</div>;
-  if (!metrics) return <div style={{padding:50}}>No data available.</div>;
+  if (loading)
+    return <div style={{ padding: 50, fontFamily: "system-ui" }}>Loading data...</div>;
+  if (error)
+    return <div style={{ padding: 50, color: "red", fontFamily: "system-ui" }}>{error}</div>;
+  if (!metrics)
+    return <div style={{ padding: 50, fontFamily: "system-ui" }}>No data yet.</div>;
 
   return (
     <div
       style={{
         fontFamily: "system-ui",
         padding: 24,
-        maxWidth: 820,
+        maxWidth: 900,
         margin: "0 auto",
         color: text,
         background: bg,
@@ -213,17 +303,19 @@ export default function App() {
         Last updated: {lastUpdated}
       </div>
 
+      {/* Tides / Waves / Seafloor */}
       <Card>
         <div style={{ fontSize: 13, color: "#555", marginBottom: 4 }}>
           Ocean Depth Forces
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <Bar label="🌊 Tides" value={metrics.tides} tooltip="Liquidity & real rate trend" />
-          <Bar label="🌬 Waves" value={metrics.waves} tooltip="Cyclical growth & policy impulse" />
-          <Bar label="🪨 Seafloor" value={metrics.seafloor} tooltip="Structural productivity base" />
+          <Bar label="🌊 Tides" value={metrics.tides} tooltip="Liquidity & real-rate trend" />
+          <Bar label="🌬 Waves" value={metrics.waves} tooltip="Cyclical policy & growth impulse" />
+          <Bar label="🪨 Seafloor" value={metrics.seafloor} tooltip="Structural productivity foundation" />
         </div>
       </Card>
 
+      {/* Regime */}
       <Card>
         <div style={{ fontSize: 13, color: "#555", marginBottom: 4 }}>
           Market Current
@@ -233,19 +325,67 @@ export default function App() {
         </div>
       </Card>
 
+      {/* Core Indicators */}
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          background: prefersDark ? "#111" : "#f8f9fa",
+          padding: 12,
+          borderRadius: 10,
+          border: "1px solid #e5e7eb",
+        }}
+      >
+        <Metric label="M2 YoY" value={metrics.M2_yoy} trend={metrics.M2_trend} />
+        <Metric label="GDP YoY" value={metrics.GDP_yoy} trend={metrics.GDP_trend} />
+        <Metric label="CPI YoY" value={metrics.CPI_yoy} trend={metrics.CPI_trend} />
+        <Metric label="Productivity YoY" value={metrics.PROD_yoy} trend={metrics.PROD_trend} />
+        <Card>
+          <div style={{ fontSize: 13, color: "#555", marginBottom: 2 }}>
+            10Y / Fed Funds / Real Rate
+          </div>
+          <div style={{ fontSize: 14 }}>
+            {fmt2.format(metrics.dgs10 ?? 0)}% / {fmt2.format(metrics.fed ?? 0)}% /{" "}
+            {fmt2.format(metrics.realRate ?? 0)}%
+          </div>
+        </Card>
+        <Metric label="Bitcoin Price (USD)" value={metrics.btc_price} isPrice />
+      </div>
+
+      {/* Narrative */}
       <Card>
-        <div style={{ fontSize: 13, color: "#555", marginBottom: 4 }}>
+        <div style={{ fontSize: 13, color: "#555", marginBottom: 6 }}>
           Investor Narrative
         </div>
         <div style={{ fontSize: 14, lineHeight: 1.4 }}>
-          Liquidity {pct(metrics.M2_yoy)}, growth {pct(metrics.GDP_yoy)}, inflation {pct(metrics.CPI_yoy)}, productivity {pct(metrics.PROD_yoy)}.<br />
-          Real rate {fmt2.format(metrics.realRate)}%, policy gap {fmt2.format(metrics.policyGap)}%.<br />
-          Tides {metrics.tides > 0.5 ? "rising" : "falling"}, waves {metrics.waves > 0.5 ? "supportive" : "muted"}, seafloor {metrics.seafloor > 0.5 ? "stable" : "soft"}.
+          Liquidity {pct(metrics.M2_yoy)}, growth {pct(metrics.GDP_yoy)}, inflation{" "}
+          {pct(metrics.CPI_yoy)}, productivity {pct(metrics.PROD_yoy)}. <br />
+          Real rate {fmt2.format(metrics.realRate)}%, policy gap {fmt2.format(metrics.policyGap)}%. <br />
+          Tides {metrics.tides > 0.5 ? "rising" : "falling"}, waves{" "}
+          {metrics.waves > 0.5 ? "supportive" : "muted"}, seafloor{" "}
+          {metrics.seafloor > 0.5 ? "stable" : "soft"}.
         </div>
       </Card>
+
+      {/* Export Button */}
+      <button
+        onClick={() => window.print()}
+        style={{
+          marginTop: 12,
+          padding: "6px 12px",
+          borderRadius: 6,
+          border: "1px solid #ccc",
+          cursor: "pointer",
+          background: prefersDark ? "#2a2a2a" : "#fafafa",
+          color: text,
+        }}
+      >
+        Export / Print PDF
+      </button>
     </div>
   );
 }
+
 
 
 
