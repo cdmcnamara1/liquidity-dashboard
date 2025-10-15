@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-// Default weights and API key (reads securely from environment)
+// --- Configuration ---
 const DEFAULT_WEIGHTS = { liquidity: 0.5, fundamentals: 0.3, bitcoin: 0.2 };
 const DEFAULT_FRED_KEY =
   import.meta.env.VITE_FRED_API_KEY || "4d7f73d268ae4c1f10e48a4a17203b0f";
 
-// FRED series codes
 const FRED_SERIES = {
   M2SL: "M2SL",
   RRP: "RRPONTSYD",
@@ -17,13 +16,13 @@ const FRED_SERIES = {
   DEBT: "GFDEBTN",
 };
 
-// Utility helpers
+// --- Helpers ---
 const fmt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const pct = (v) => (v == null ? "—" : `${fmt.format(v)}%`);
-const clamp01 = (n) => Math.max(0, Math.min(1, n));
-const trendArrow = (v) => (v == null ? "" : v > 0 ? "↑" : v < 0 ? "↓" : "→");
+const arrow = (v) =>
+  v == null ? "" : v > 0 ? "↑" : v < 0 ? "↓" : "→";
 
-// Year-over-year change
+// --- Data Functions ---
 function yoy(obs) {
   if (!obs || obs.length < 13) return null;
   const last = parseFloat(obs[obs.length - 1].value);
@@ -32,17 +31,7 @@ function yoy(obs) {
   return ((last - prev) / prev) * 100;
 }
 
-// 3-month delta
-function delta3m(obs) {
-  if (!obs || obs.length < 2) return null;
-  const last = parseFloat(obs[obs.length - 1].value);
-  const idx = Math.max(0, obs.length - 1 - Math.min(60, obs.length - 1));
-  const prev = parseFloat(obs[idx].value);
-  if (!isFinite(last) || !isFinite(prev)) return null;
-  return last - prev;
-}
-
-// ✅ FRED fetch function using your own serverless proxy
+// FRED fetch via your Vercel proxy
 async function fredObservations(seriesId, apiKey, params = {}) {
   const search = new URLSearchParams({
     series_id: seriesId,
@@ -50,59 +39,39 @@ async function fredObservations(seriesId, apiKey, params = {}) {
     file_type: "json",
     ...params,
   });
-
-  // Call your own Vercel API endpoint (no CORS issues)
   const url = `/api/fred?${search.toString()}`;
-
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`FRED ${seriesId} HTTP ${res.status}`);
-    const json = await res.json();
-    return json?.observations || [];
-  } catch (err) {
-    console.error("FRED fetch error:", err);
-    throw err;
-  }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`FRED ${seriesId} HTTP ${res.status}`);
+  const json = await res.json();
+  return json?.observations || [];
 }
 
-// CoinGecko Bitcoin data fetch
+// CoinGecko via your proxy
 async function coingeckoBTC() {
   const res = await fetch("/api/coingecko");
   if (!res.ok) throw new Error(`CoinGecko HTTP ${res.status}`);
   return res.json();
 }
 
-// ----------------------------------------------------------
-
+// --- Main Component ---
 export default function App() {
   const [apiKey, setApiKey] = useState(
     localStorage.getItem("FRED_API_KEY") || DEFAULT_FRED_KEY
   );
-  const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [series, setSeries] = useState({});
   const [btc, setBtc] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
+  // Load all datasets
   async function loadAll() {
     setError(null);
     if (!apiKey) return setError("Missing FRED key");
     setLoading(true);
     try {
-      const [m2, rrp, dxy, tips10, vix, prod, gdp, debt] = await Promise.all([
+      const [m2, prod, gdp] = await Promise.all([
         fredObservations(FRED_SERIES.M2SL, apiKey, {
-          observation_start: "2010-01-01",
-        }),
-        fredObservations(FRED_SERIES.RRP, apiKey, {
-          observation_start: "2020-01-01",
-        }),
-        fredObservations(FRED_SERIES.DXY, apiKey, {
-          observation_start: "2010-01-01",
-        }),
-        fredObservations(FRED_SERIES.TIPS10, apiKey, {
-          observation_start: "2010-01-01",
-        }),
-        fredObservations(FRED_SERIES.VIX, apiKey, {
           observation_start: "2010-01-01",
         }),
         fredObservations(FRED_SERIES.PROD, apiKey, {
@@ -111,23 +80,11 @@ export default function App() {
         fredObservations(FRED_SERIES.GDP_REAL, apiKey, {
           observation_start: "2010-01-01",
         }),
-        fredObservations(FRED_SERIES.DEBT, apiKey, {
-          observation_start: "2010-01-01",
-        }),
       ]);
-
       const btcJson = await coingeckoBTC();
-      setSeries({
-        M2SL: m2,
-        RRP: rrp,
-        DXY: dxy,
-        TIPS10: tips10,
-        VIX: vix,
-        PROD: prod,
-        GDP_REAL: gdp,
-        DEBT: debt,
-      });
+      setSeries({ M2SL: m2, PROD: prod, GDP_REAL: gdp });
       setBtc(btcJson);
+      setLastUpdated(new Date().toLocaleString());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -135,14 +92,13 @@ export default function App() {
     }
   }
 
-  // On mount → set FRED key if missing, then load data
   useEffect(() => {
     if (!localStorage.getItem("FRED_API_KEY"))
       localStorage.setItem("FRED_API_KEY", DEFAULT_FRED_KEY);
     loadAll();
   }, []);
 
-  // Derive metrics
+  // Compute metrics
   const metrics = useMemo(() => {
     const M2_yoy = series.M2SL ? yoy(series.M2SL) : null;
     const GDP_yoy = series.GDP_REAL ? yoy(series.GDP_REAL) : null;
@@ -151,36 +107,123 @@ export default function App() {
     return { M2_yoy, GDP_yoy, PROD_yoy, btc_price };
   }, [series, btc]);
 
-  // ----------------------------------------------------------
-
+  // --- UI ---
   return (
-    <div style={{ fontFamily: "system-ui", padding: 24 }}>
-      <h1>Liquidity–Fundamentals Dashboard</h1>
-
-      {error && <div style={{ color: "red", marginBottom: 8 }}>{error}</div>}
+    <div
+      style={{
+        fontFamily: "system-ui",
+        padding: 24,
+        maxWidth: 600,
+        margin: "0 auto",
+        color: "#111",
+      }}
+    >
+      <h1 style={{ fontSize: "1.4rem", marginBottom: 8 }}>
+        Liquidity–Fundamentals Dashboard
+      </h1>
 
       <button
         onClick={loadAll}
         style={{
-          marginBottom: 12,
+          marginBottom: 10,
           padding: "6px 12px",
           borderRadius: 6,
           border: "1px solid #ccc",
+          cursor: "pointer",
         }}
       >
         {loading ? "Refreshing…" : "Refresh"}
       </button>
 
-      <pre
+      {lastUpdated && (
+        <div
+          style={{
+            fontSize: 12,
+            color: "#555",
+            marginBottom: 10,
+          }}
+        >
+          Last updated: {lastUpdated}
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            color: "red",
+            marginBottom: 12,
+            background: "#fee2e2",
+            padding: 8,
+            borderRadius: 8,
+            border: "1px solid #fca5a5",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      <div
         style={{
-          background: "#f7f7f9",
-          borderRadius: 8,
+          display: "grid",
+          gap: 10,
+          background: "#f8f9fa",
           padding: 12,
-          fontSize: 14,
+          borderRadius: 10,
+          border: "1px solid #e5e7eb",
         }}
       >
-        {JSON.stringify(metrics, null, 2)}
-      </pre>
+        <Metric label="M2 YoY" value={metrics.M2_yoy} />
+        <Metric label="GDP YoY" value={metrics.GDP_yoy} />
+        <Metric label="Productivity YoY" value={metrics.PROD_yoy} />
+        <Metric
+          label="Bitcoin Price"
+          value={
+            metrics.btc_price ? `$${fmt.format(metrics.btc_price)}` : "—"
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+// --- Small metric subcomponent ---
+function Metric({ label, value }) {
+  const dir = arrow(value);
+  const color =
+    value == null
+      ? "#666"
+      : value > 0
+      ? "#16a34a"
+      : value < 0
+      ? "#dc2626"
+      : "#111";
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: "1px solid #eee",
+        borderRadius: 8,
+        padding: "8px 10px",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 13,
+          color: "#555",
+          marginBottom: 2,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 18,
+          fontWeight: 600,
+          color,
+        }}
+      >
+        {value == null ? "—" : pct(value)} {dir}
+      </div>
     </div>
   );
 }
