@@ -1,5 +1,3 @@
-// api/fred.js — safe version for Vercel Edge Runtime
-
 import fetch from "node-fetch";
 
 export default async function handler(req, res) {
@@ -25,6 +23,7 @@ export default async function handler(req, res) {
     });
 
     const url = `https://api.stlouisfed.org/fred/series/observations?${search.toString()}`;
+
     const fredRes = await fetch(url);
     const text = await fredRes.text();
 
@@ -35,3 +34,4 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+
