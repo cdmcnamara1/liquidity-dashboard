@@ -59,12 +59,10 @@ async function fredObservations(seriesId, apiKey, params = {}) {
     ...params,
   });
 
-  // Force browser-side fetch through a public CORS proxy
-  const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(
-    "https://api.stlouisfed.org/fred/series/observations?" + search.toString()
-  )}`;
+  // ✅ Use your own serverless API route hosted on Vercel
+  const url = `/api/fred?${search.toString()}`;
 
-  const res = await fetch(url, { mode: "cors" });
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`FRED ${seriesId} HTTP ${res.status}`);
   const json = await res.json();
   return json?.observations || [];
