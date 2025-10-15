@@ -1,5 +1,3 @@
-// trigger redeploy to include /api routes
-
 import React, { useEffect, useMemo, useState } from "react";
 
 // --- Configuration ---
@@ -177,28 +175,26 @@ export default function App() {
         <Metric label="M2 YoY" value={metrics.M2_yoy} />
         <Metric label="GDP YoY" value={metrics.GDP_yoy} />
         <Metric label="Productivity YoY" value={metrics.PROD_yoy} />
-        <Metric
-          label="Bitcoin Price"
-          value={
-            metrics.btc_price ? `$${fmt.format(metrics.btc_price)}` : "—"
-          }
-        />
+        <Metric label="Bitcoin Price (USD)" value={metrics.btc_price} isPrice />
       </div>
     </div>
   );
 }
 
 // --- Small metric subcomponent ---
-function Metric({ label, value }) {
-  const dir = arrow(value);
+function Metric({ label, value, isPrice = false }) {
+  const dir = isPrice ? "" : arrow(value);
   const color =
     value == null
       ? "#666"
+      : isPrice
+      ? "#111"
       : value > 0
       ? "#16a34a"
       : value < 0
       ? "#dc2626"
       : "#111";
+
   return (
     <div
       style={{
@@ -208,25 +204,19 @@ function Metric({ label, value }) {
         padding: "8px 10px",
       }}
     >
-      <div
-        style={{
-          fontSize: 13,
-          color: "#555",
-          marginBottom: 2,
-        }}
-      >
+      <div style={{ fontSize: 13, color: "#555", marginBottom: 2 }}>
         {label}
       </div>
-      <div
-        style={{
-          fontSize: 18,
-          fontWeight: 600,
-          color,
-        }}
-      >
-        {value == null ? "—" : pct(value)} {dir}
+      <div style={{ fontSize: 18, fontWeight: 600, color }}>
+        {value == null
+          ? "—"
+          : isPrice
+          ? `$${fmt.format(value)}`
+          : pct(value)}{" "}
+        {dir}
       </div>
     </div>
   );
 }
+
 
