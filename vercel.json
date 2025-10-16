@@ -4,14 +4,20 @@
     "api-server/*.js": {
       "runtime": "nodejs18.x",
       "maxDuration": 10
+    },
+    "_healthcheck.js": {
+      "runtime": "nodejs18.x",
+      "maxDuration": 5
     }
   },
   "builds": [
     { "src": "api-server/*.js", "use": "@vercel/node" },
+    { "src": "_healthcheck.js", "use": "@vercel/node" },
     { "src": "package.json", "use": "@vercel/static-build" }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api-server/$1" },
+    { "src": "/_healthcheck", "dest": "/_healthcheck.js" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
