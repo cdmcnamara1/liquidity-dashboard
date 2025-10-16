@@ -12,13 +12,16 @@
   "builds": [
     { "src": "api-server/*.js", "use": "@vercel/node" },
     { "src": "_healthcheck.js", "use": "@vercel/node" },
-    { "src": "vite.config.js", "use": "@vercel/static-build" }
+    { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api-server/$1" },
     { "src": "/_healthcheck", "dest": "/_healthcheck.js" },
     { "src": "/(.*)", "dest": "/index.html" }
-  ]
+  ],
+  "outputDirectory": "."
 }
+
+
 
 
